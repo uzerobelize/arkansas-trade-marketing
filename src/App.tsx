@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   ShieldCheck,
   Calculator,
@@ -92,22 +92,6 @@ export default function App() {
     email: "",
   });
 
-  // Month Names
-  const MONTH_NAMES = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-  ];
-
   // Calendar State
   // const [currentMonth, setCurrentMonth] = useState(new Date(2026, 9, 1)); // October 2026
   //
@@ -115,13 +99,7 @@ export default function App() {
   const [selectedTime, setSelectedTime] = useState("10:30 AM");
   const [selectedTimezone, setSelectedTimezone] = useState("CST");
   const [calendarViewMode, setCalendarViewMode] = useState("month"); // 'month' | 'week'
-  const [bookedSlots, setBookedSlots] = useState(MOCK_BOOKED_SLOTS);
   const [viewDate, setViewDate] = useState(new Date(2026, 9, 1)); // Default to October 2026
-
-  const [currentMonth, setCurrentMonth] = useState(9); // October (0-indexed 9)
-  const [currentYear, setCurrentYear] = useState(2026);
-  const [viewMode, setViewMode] = useState("month"); // "month" or "week"
-  const [selectedTimeSlot, setSelectedTimeSlot] = useState("10:30 AM");
 
   // Calculator State
   const [jobSize, setJobSize] = useState<number>(20000);
@@ -133,6 +111,7 @@ export default function App() {
   const [simPhone, setSimPhone] = useState<string>("(501) 555-0199");
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
   const [simResult, setSimResult] = useState<SimResult | null>(null);
+  const [bookedSlots, _/*setBookedSlots*/] = useState(MOCK_BOOKED_SLOTS);
 
   // Mobile Menu State
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
@@ -319,11 +298,6 @@ export default function App() {
         });
       }
     }, 800);
-  };
-
-  const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setModalSubmitted(true);
   };
 
   const deliverables = [
@@ -547,7 +521,7 @@ export default function App() {
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#E8EBF7] border border-[#0093B3]/30 text-[#002D3C] text-xs sm:text-sm font-bold mb-8 shadow-sm">
               <Hammer className="w-4 h-4 text-[#F96E46]" />
               <span>
-                Built By Someone Who’s Worked On A Roof In The July Heat &bull;
+                Built By Someone Who’s Worked On A Roof In The July Summer Heat &bull;
                 Not Someone Who Sweats Over PowerPoint Slides
               </span>
             </div>
