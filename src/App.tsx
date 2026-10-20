@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import {
   ShieldCheck,
   Calculator,
@@ -14,13 +14,11 @@ import {
   DollarSign,
   TrendingUp,
   Sparkles,
-  Clock,
   Filter,
   MessageSquare,
   Menu,
   Info,
   ChevronRight,
-  ChevronLeft,
   Award,
   PhoneCall,
   Hammer,
@@ -43,65 +41,11 @@ interface SimResult {
   savings: string;
 }
 
-// ==========================================
-// MOCK BOOKED SLOTS GENERATOR
-// ==========================================
-// Pre-populates some realistic "Booked" slots so the calendar isn't empty
-const MOCK_BOOKED_SLOTS = new Set([
-  "2026-10-20-09:00",
-  "2026-10-20-11:00",
-  "2026-10-20-14:00",
-  "2026-10-21-10:00",
-  "2026-10-21-13:30",
-  "2026-10-22-09:30",
-  "2026-10-22-15:00",
-  "2026-10-23-10:30",
-  "2026-10-26-08:30",
-  "2026-10-26-14:30",
-]);
-
-const TIME_SLOTS = [
-  "08:00 AM",
-  "08:30 AM",
-  "09:00 AM",
-  "09:30 AM",
-  "10:00 AM",
-  "10:30 AM",
-  "11:00 AM",
-  "11:30 AM",
-  "01:00 PM",
-  "01:30 PM",
-  "02:00 PM",
-  "02:30 PM",
-  "03:00 PM",
-  "03:30 PM",
-  "04:00 PM",
-  "04:30 PM",
-];
-
 export default function App() {
   // Modal & Booking Flow State
   const [isBookingOpen, setIsBookingOpen] = useState(false);
   // 1: Intake Form, 2: Calendar & Slot, 3: Confirmation
   const [bookingStep, setBookingStep] = useState(1);
-
-  // Intake Form State
-  const [formData, setFormData] = useState({
-    contractorName: "",
-    companyName: "",
-    tradeFocus: "Siding & Trim",
-    phone: "",
-    email: "",
-  });
-
-  // Calendar State
-  // const [currentMonth, setCurrentMonth] = useState(new Date(2026, 9, 1)); // October 2026
-  //
-  const [selectedDate, setSelectedDate] = useState("2026-10-21");
-  const [selectedTime, setSelectedTime] = useState("10:30 AM");
-  const [selectedTimezone, setSelectedTimezone] = useState("CST");
-  const [calendarViewMode, setCalendarViewMode] = useState("month"); // 'month' | 'week'
-  const [viewDate, setViewDate] = useState(new Date(2026, 9, 1)); // Default to October 2026
 
   // Calculator State
   const [jobSize, setJobSize] = useState<number>(20000);
@@ -113,7 +57,6 @@ export default function App() {
   const [simPhone, setSimPhone] = useState<string>("(501) 555-0199");
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
   const [simResult, setSimResult] = useState<SimResult | null>(null);
-  const [bookedSlots, _/*setBookedSlots*/] = useState(MOCK_BOOKED_SLOTS);
 
   // Mobile Menu State
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
@@ -126,128 +69,6 @@ export default function App() {
     setBookingStep(step);
     setIsBookingOpen(true);
   };
-
-  // Month Navigation using JS Date object logic
-  const handlePrevMonth = () => {
-    setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, 1));
-  };
-
-  const handleNextMonth = () => {
-    setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 1));
-  };
-
-  const handleTodayMonth = () => {
-    const today = new Date(2026, 9, 20); // Pinning today to Oct 20, 2026 for demo consistency
-    setViewDate(new Date(today.getFullYear(), today.getMonth(), 1));
-    setSelectedDate("2026-10-20");
-  };
-
-  // Format Helper YYYY-MM-DD
-  const formatDateStr = (year: number, month: number, day: number) => {
-    const m = String(month + 1).padStart(2, "0");
-    const d = String(day).padStart(2, "0");
-    return `${year}-${m}-${d}`;
-  };
-
-  // Days calculation for Month View Grid
-  const monthCalendarGrid = useMemo(() => {
-    const year = viewDate.getFullYear();
-    const month = viewDate.getMonth();
-
-    const firstDayIndex = new Date(year, month, 1).getDay(); // 0 = Sun
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    const daysInPrevMonth = new Date(year, month, 0).getDate();
-
-    const grid = [];
-    const todayStr = "2026-10-18"; // Baseline comparison date
-
-    // Previous month padding
-    for (let i = firstDayIndex - 1; i >= 0; i--) {
-      const dayNum = daysInPrevMonth - i;
-      const prevM = month === 0 ? 11 : month - 1;
-      const prevY = month === 0 ? year - 1 : year;
-      const dateStr = formatDateStr(prevY, prevM, dayNum);
-      grid.push({
-        dayNum,
-        dateStr,
-        isCurrentMonth: false,
-        isPast: true,
-      });
-    }
-
-    // Current month days
-    for (let d = 1; d <= daysInMonth; d++) {
-      const dateStr = formatDateStr(year, month, d);
-      const dayOfWeek = new Date(year, month, d).getDay();
-      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-
-      grid.push({
-        dayNum: d,
-        dateStr,
-        isCurrentMonth: true,
-        isWeekend,
-        isPast: dateStr < todayStr,
-      });
-    }
-
-    // Next month padding to fill 35 or 42 grid cells
-    const totalCells = grid.length > 35 ? 42 : 35;
-    const remainingCells = totalCells - grid.length;
-    for (let i = 1; i <= remainingCells; i++) {
-      const nextM = month === 11 ? 0 : month + 1;
-      const nextY = month === 11 ? year + 1 : year;
-      const dateStr = formatDateStr(nextY, nextM, i);
-      grid.push({
-        dayNum: i,
-        dateStr,
-        isCurrentMonth: false,
-        isPast: false,
-      });
-    }
-
-    return grid;
-  }, [viewDate]);
-
-  // Week View Calculation
-  const weekViewDays = useMemo(() => {
-    const baseDate = selectedDate
-      ? new Date(selectedDate + "T00:00:00")
-      : new Date(2026, 9, 20);
-    const dayOfWeek = baseDate.getDay(); // 0 = Sun
-    const startOfWeek = new Date(baseDate);
-    startOfWeek.setDate(baseDate.getDate() - dayOfWeek); // Sunday as start
-
-    const days = [];
-    const monthNames = [
-      "Jan",
-      "Feb",
-      "Mar",
-      "Apr",
-      "May",
-      "Jun",
-      "Jul",
-      "Aug",
-      "Sep",
-      "Oct",
-      "Nov",
-      "Dec",
-    ];
-
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(startOfWeek);
-      d.setDate(startOfWeek.getDate() + i);
-      const dateStr = formatDateStr(d.getFullYear(), d.getMonth(), d.getDate());
-      const dayName = d.toLocaleDateString("en-US", { weekday: "short" });
-      days.push({
-        dateStr,
-        dayNum: d.getDate(),
-        dayName,
-        monthName: monthNames[d.getMonth()],
-        isPast: dateStr < "2026-10-18",
-      });
-    }
-    return days;
-  }, [selectedDate]);
 
   // Lock body scroll when modal is open
   useEffect(() => {
