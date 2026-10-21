@@ -1,6 +1,6 @@
 import type { LeadFormData, ApiResult } from "../entities/lead";
 
-const API_BASE_URL = import.meta.env.API_URL || "api.arkansastrademarketing.com";
+const API_BASE_URL = import.meta.env.API_URL || "https://api.arkansastrademarketing.com";
 
 /**
  * Writes new lead data from a multi-stage form to the Hono API endpoint.
