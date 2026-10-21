@@ -29,6 +29,8 @@ import {
 } from "lucide-react";
 import { BookingModal } from "./components/BookingModal";
 import type { BookingData } from "./components/BookingModal";
+import { createLead } from "./services/leadService";
+import type { LeadFormData } from "./entities/lead";
 import "./App.css";
 import SDI_Logo from "./assets/logo.png";
 
@@ -82,8 +84,19 @@ export default function App() {
     };
   }, [isBookingOpen]);
 
-  const handleBookingComplete = (data: BookingData) => {
-    console.log("Strategy call booked successfully:", data);
+  const handleBookingComplete = async (data: BookingData) => {
+    const lead_dto = {
+      firstName: data.contractorName.split(" ")[0],
+      lastName: data.contractorName.split(" ")[1] || "",
+      email: data.email,
+      status: "new",
+      phone: data.phone,
+      notes: `BOOKING DATA INCOMING`,
+    } as LeadFormData;
+
+    const lead = await createLead(lead_dto);
+
+    console.log("Strategy call booked successfully:", lead);
   };
 
   const netPerJob = jobSize * (margin / 100);
