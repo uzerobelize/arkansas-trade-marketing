@@ -9,6 +9,8 @@ import {
   Loader2,
   AlertCircle,
   RefreshCw,
+  Video,
+  ExternalLink,
 } from "lucide-react";
 
 export interface BookingData {
@@ -21,6 +23,8 @@ export interface BookingData {
   time: string;
   timezone: string;
   selectedIsoSlot?: string;
+  meetLink?: string;
+  bookingId?: number | null;
 }
 
 interface BookingModalProps {
@@ -34,6 +38,14 @@ interface AvailabilityApiResponse {
   date: string;
   timezone: string;
   availableSlots: string[]; // ISO string array e.g. ["2026-10-21T14:00:00.000Z"]
+  error?: string;
+}
+
+interface BookingApiResponse {
+  message: string;
+  bookingId?: number | null;
+  meetLink?: string;
+  isDuplicate?: boolean;
   error?: string;
 }
 
@@ -55,6 +67,7 @@ const getTimezoneString = (tz: string) => {
 
 // Formats UTC ISO 8601 string to local time (e.g. "09:30 AM")
 const formatSlotTime = (isoString: string, timezone: string) => {
+  if (!isoString) return "";
   try {
     const date = new Date(isoString);
     const targetTz = getTimezoneString(timezone);
@@ -89,6 +102,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     email: "",
   });
 
+  // Validation Errors state
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+
   // Calendar state
   const [selectedDate, setSelectedDate] = useState("2026-10-21");
   const [selectedIsoSlot, setSelectedIsoSlot] = useState<string>("");
@@ -105,7 +121,14 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     null,
   );
 
-  // Reset or sync step when modal opens
+  // Phase 2: API Booking State
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [bookingError, setBookingError] = useState<string | null>(null);
+  const [bookingResult, setBookingResult] = useState<BookingApiResponse | null>(
+    null,
+  );
+
+  // Sync step when modal opens
   useEffect(() => {
     if (isOpen) {
       setBookingStep(initialStep);
@@ -124,13 +147,48 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     };
   }, [isOpen]);
 
+  // Client-side Step 1 Validation matching createBookingSchema
+  const validateStep1 = () => {
+    const errors: Record<string, string> = {};
+
+    if (formData.contractorName.trim().length < 2) {
+      errors.contractorName = "Name must be at least 2 characters";
+    }
+
+    if (!formData.companyName.trim()) {
+      errors.companyName = "Company name is required";
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(formData.email.trim())) {
+      errors.email = "Invalid email address";
+    }
+
+    // Ensure phone has at least 10 digits
+    const cleanedPhone = formData.phone.replace(/\D/g, "");
+    if (cleanedPhone.length < 10) {
+      errors.phone = "Valid phone number required (at least 10 digits)";
+    }
+
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  // Clear single field error on change
+  const handleInputChange = (field: string, value: string) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+    if (formErrors[field]) {
+      setFormErrors((prev) => ({ ...prev, [field]: "" }));
+    }
+  };
+
   // PHASE 1: Fetch availability from Hono API when date or timezone changes
   const fetchAvailability = async () => {
     if (!selectedDate) return;
 
     setIsLoadingSlots(true);
     setAvailabilityError(null);
-    setSelectedIsoSlot(""); // Reset selection on change
+    setSelectedIsoSlot(""); // Reset selection on date/tz change
 
     try {
       const host = 'https://api.arkansastrademarketing.com';
@@ -166,6 +224,80 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       fetchAvailability();
     }
   }, [isOpen, bookingStep, selectedDate, selectedTimezone]);
+
+  // PHASE 2: Submit Booking Request to POST /api/bookings
+  const handleConfirmBooking = async () => {
+    if (!selectedIsoSlot) return;
+
+    setIsSubmitting(true);
+    setBookingError(null);
+
+    // Calculate endTime (30 mins after selectedIsoSlot)
+    const startTimeDate = new Date(selectedIsoSlot);
+    const endTimeDate = new Date(startTimeDate.getTime() + 30 * 60 * 1000);
+
+    const bookingPayload = {
+      name: formData.contractorName.trim(),
+      company: formData.companyName.trim(),
+      email: formData.email.trim(),
+      phone: formData.phone.trim(),
+      notes: `Trade Focus: ${formData.tradeFocus}`,
+      startTime: selectedIsoSlot,
+      endTime: endTimeDate.toISOString(),
+      timezone: selectedTimezone,
+    };
+
+    try {
+      const host = 'https://api.arkansastrademarketing.com';
+      const endpoint = '/api/bookings';
+      const url = `${host}${endpoint}`;
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(bookingPayload),
+      });
+
+      const data: BookingApiResponse = await response.json();
+
+      if (response.status === 409) {
+        // Double booking conflict: notify user & refresh availability
+        setBookingError(data.error || "This time slot is no longer available.");
+        setSelectedIsoSlot("");
+        fetchAvailability();
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to process booking reservation.");
+      }
+
+      // Success
+      setBookingResult(data);
+      const completedData: BookingData = {
+        ...formData,
+        date: selectedDate,
+        time: formatSlotTime(selectedIsoSlot, selectedTimezone),
+        timezone: selectedTimezone,
+        selectedIsoSlot,
+        meetLink: data.meetLink,
+        bookingId: data.bookingId,
+      };
+
+      if (onBookingComplete) {
+        onBookingComplete(completedData);
+      }
+
+      setBookingStep(3);
+    } catch (err) {
+      console.error("Booking Submission Error:", err);
+      setBookingError(
+        err instanceof Error ? err.message : "An unexpected error occurred.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   // Date String Formatting Helper YYYY-MM-DD
   const formatDateStr = (year: number, month: number, day: number) => {
@@ -319,9 +451,12 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                setBookingStep(2);
+                if (validateStep1()) {
+                  setBookingStep(2);
+                }
               }}
               className="space-y-5"
+              noValidate
             >
               <div className="text-center max-w-md mx-auto mb-6">
                 <h3 className="text-xl font-black text-[#002D3C]">
@@ -344,13 +479,19 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     placeholder="e.g. Mark Tidd"
                     value={formData.contractorName}
                     onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        contractorName: e.target.value,
-                      })
+                      handleInputChange("contractorName", e.target.value)
                     }
-                    className="w-full bg-[#F8FAFC] border border-[#0093B3]/30 rounded-xl px-4 py-3 text-xs text-[#002D3C] font-semibold focus:border-[#0093B3] focus:bg-white focus:outline-none"
+                    className={`w-full bg-[#F8FAFC] border rounded-xl px-4 py-3 text-xs text-[#002D3C] font-semibold focus:bg-white focus:outline-none transition-colors ${
+                      formErrors.contractorName
+                        ? "border-red-500 focus:border-red-500"
+                        : "border-[#0093B3]/30 focus:border-[#0093B3]"
+                    }`}
                   />
+                  {formErrors.contractorName && (
+                    <p className="text-red-500 text-[11px] font-bold mt-1">
+                      {formErrors.contractorName}
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -363,13 +504,19 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     placeholder="e.g. Tidd Siding & Remodeling"
                     value={formData.companyName}
                     onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        companyName: e.target.value,
-                      })
+                      handleInputChange("companyName", e.target.value)
                     }
-                    className="w-full bg-[#F8FAFC] border border-[#0093B3]/30 rounded-xl px-4 py-3 text-xs text-[#002D3C] font-semibold focus:border-[#0093B3] focus:bg-white focus:outline-none"
+                    className={`w-full bg-[#F8FAFC] border rounded-xl px-4 py-3 text-xs text-[#002D3C] font-semibold focus:bg-white focus:outline-none transition-colors ${
+                      formErrors.companyName
+                        ? "border-red-500 focus:border-red-500"
+                        : "border-[#0093B3]/30 focus:border-[#0093B3]"
+                    }`}
                   />
+                  {formErrors.companyName && (
+                    <p className="text-red-500 text-[11px] font-bold mt-1">
+                      {formErrors.companyName}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -383,11 +530,18 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     required
                     placeholder="(501) 555-0199"
                     value={formData.phone}
-                    onChange={(e) =>
-                      setFormData({ ...formData, phone: e.target.value })
-                    }
-                    className="w-full bg-[#F8FAFC] border border-[#0093B3]/30 rounded-xl px-4 py-3 text-xs text-[#002D3C] font-semibold focus:border-[#0093B3] focus:bg-white focus:outline-none"
+                    onChange={(e) => handleInputChange("phone", e.target.value)}
+                    className={`w-full bg-[#F8FAFC] border rounded-xl px-4 py-3 text-xs text-[#002D3C] font-semibold focus:bg-white focus:outline-none transition-colors ${
+                      formErrors.phone
+                        ? "border-red-500 focus:border-red-500"
+                        : "border-[#0093B3]/30 focus:border-[#0093B3]"
+                    }`}
                   />
+                  {formErrors.phone && (
+                    <p className="text-red-500 text-[11px] font-bold mt-1">
+                      {formErrors.phone}
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -399,11 +553,18 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     required
                     placeholder="owner@tiddsiding.com"
                     value={formData.email}
-                    onChange={(e) =>
-                      setFormData({ ...formData, email: e.target.value })
-                    }
-                    className="w-full bg-[#F8FAFC] border border-[#0093B3]/30 rounded-xl px-4 py-3 text-xs text-[#002D3C] font-semibold focus:border-[#0093B3] focus:bg-white focus:outline-none"
+                    onChange={(e) => handleInputChange("email", e.target.value)}
+                    className={`w-full bg-[#F8FAFC] border rounded-xl px-4 py-3 text-xs text-[#002D3C] font-semibold focus:bg-white focus:outline-none transition-colors ${
+                      formErrors.email
+                        ? "border-red-500 focus:border-red-500"
+                        : "border-[#0093B3]/30 focus:border-[#0093B3]"
+                    }`}
                   />
+                  {formErrors.email && (
+                    <p className="text-red-500 text-[11px] font-bold mt-1">
+                      {formErrors.email}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -616,20 +777,22 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   </span>
                 </div>
 
-                {/* API Error State Banner */}
-                {availabilityError && (
+                {/* API Availability or Booking Error State Banner */}
+                {(availabilityError || bookingError) && (
                   <div className="p-4 mb-3 bg-red-50 border border-red-200 rounded-xl flex items-center justify-between text-red-700 text-xs">
                     <div className="flex items-center gap-2">
                       <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
-                      <span>{availabilityError}</span>
+                      <span>{bookingError || availabilityError}</span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={fetchAvailability}
-                      className="inline-flex items-center gap-1 font-bold underline hover:text-red-900 cursor-pointer"
-                    >
-                      <RefreshCw className="w-3 h-3" /> Retry
-                    </button>
+                    {availabilityError && (
+                      <button
+                        type="button"
+                        onClick={fetchAvailability}
+                        className="inline-flex items-center gap-1 font-bold underline hover:text-red-900 cursor-pointer"
+                      >
+                        <RefreshCw className="w-3 h-3" /> Retry
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -663,7 +826,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                         <button
                           key={isoSlot}
                           type="button"
-                          onClick={() => setSelectedIsoSlot(isoSlot)}
+                          onClick={() => {
+                            setSelectedIsoSlot(isoSlot);
+                            setBookingError(null);
+                          }}
                           className={`py-2.5 px-3 rounded-xl text-xs font-mono font-bold transition-all flex items-center justify-between cursor-pointer ${
                             isSelected
                               ? "bg-[#F96E46] text-white border border-[#F96E46] shadow-md scale-105 z-10"
@@ -687,29 +853,36 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               <div className="flex items-center justify-between pt-4 border-t border-[#0093B3]/20">
                 <button
                   type="button"
+                  disabled={isSubmitting}
                   onClick={() => setBookingStep(1)}
-                  className="px-4 py-2.5 text-xs text-[#002D3C]/70 hover:text-[#002D3C] font-bold cursor-pointer"
+                  className="px-4 py-2.5 text-xs text-[#002D3C]/70 hover:text-[#002D3C] font-bold cursor-pointer disabled:opacity-50"
                 >
                   ← Back to Details
                 </button>
 
                 <button
                   type="button"
-                  disabled={!selectedIsoSlot}
-                  onClick={() => {
-                    if (!selectedIsoSlot) return;
-                    setBookingStep(3);
-                  }}
+                  disabled={!selectedIsoSlot || isSubmitting}
+                  onClick={handleConfirmBooking}
                   className="bg-[#F96E46] hover:bg-[#e25d36] disabled:opacity-50 text-white font-extrabold px-6 py-3 rounded-xl text-xs uppercase tracking-wider transition-all flex items-center space-x-2 cursor-pointer shadow-lg"
                 >
-                  <span>Confirm Appointment</span>
-                  <Check className="w-4 h-4" />
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-white" />
+                      <span>Reserving Slot...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Confirm Appointment</span>
+                      <Check className="w-4 h-4" />
+                    </>
+                  )}
                 </button>
               </div>
             </div>
           )}
 
-          {/* STEP 3: CONFIRMATION SCREEN (Stubbed for Phase 2) */}
+          {/* STEP 3: CONFIRMATION SCREEN */}
           {bookingStep === 3 && (
             <div className="text-center space-y-6 py-4">
               <div className="w-16 h-16 bg-[#0093B3]/10 border-2 border-[#0093B3] rounded-full flex items-center justify-center text-[#0093B3] mx-auto shadow-sm">
@@ -723,6 +896,11 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 <h3 className="text-2xl font-black text-[#002D3C] mt-3">
                   Strategy Call Confirmed!
                 </h3>
+                <p className="text-xs text-[#002D3C]/70 mt-1 font-medium">
+                  {bookingResult?.isDuplicate
+                    ? "Welcome back! Your existing lead record has been updated with this new reservation."
+                    : "Calendar invite and email confirmation have been dispatched."}
+                </p>
               </div>
 
               {/* Summary Card */}
@@ -738,39 +916,47 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 <div className="flex justify-between border-b border-[#0093B3]/20 pb-2">
                   <span className="text-[#002D3C]/70">Contractor:</span>
                   <span className="text-[#002D3C] font-bold">
-                    {formData.contractorName || "Mark Tidd"}
+                    {formData.contractorName}
                   </span>
                 </div>
                 <div className="flex justify-between border-b border-[#0093B3]/20 pb-2">
                   <span className="text-[#002D3C]/70">Company:</span>
                   <span className="text-[#002D3C] font-bold">
-                    {formData.companyName || "Tidd Siding"}
+                    {formData.companyName}
                   </span>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex justify-between border-b border-[#0093B3]/20 pb-2">
                   <span className="text-[#002D3C]/70">Direct Cell:</span>
                   <span className="text-[#002D3C] font-bold">
-                    {formData.phone || "(501) 555-0199"}
+                    {formData.phone}
                   </span>
                 </div>
+
+                {/* Google Meet Link Display */}
+                {bookingResult?.meetLink && (
+                  <div className="pt-2 flex items-center justify-between bg-white p-3 rounded-xl border border-[#0093B3]/30">
+                    <div className="flex items-center space-x-2 text-[#0093B3] font-bold">
+                      <Video className="w-4 h-4" />
+                      <span>Google Meet:</span>
+                    </div>
+                    <a
+                      href={bookingResult.meetLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center space-x-1 text-[#F96E46] hover:underline font-bold"
+                    >
+                      <span>Join Call</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    if (onBookingComplete) {
-                      onBookingComplete({
-                        ...formData,
-                        date: selectedDate,
-                        time: formatSlotTime(selectedIsoSlot, selectedTimezone),
-                        timezone: selectedTimezone,
-                        selectedIsoSlot,
-                      });
-                    }
-                    onClose();
-                  }}
-                  className="w-full sm:w-auto bg-[#F96E46] hover:bg-[#e25d36] text-white px-6 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer shadow-lg"
+                  onClick={onClose}
+                  className="w-full sm:w-auto bg-[#F96E46] hover:bg-[#e25d36] text-white px-8 py-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer shadow-lg"
                 >
                   Done & Close
                 </button>
