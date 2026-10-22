@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 import {
   X,
   ArrowRight,
@@ -6,7 +6,9 @@ import {
   ChevronRight,
   Clock,
   Check,
-  Calendar,
+  Loader2,
+  AlertCircle,
+  RefreshCw,
 } from "lucide-react";
 
 export interface BookingData {
@@ -18,6 +20,7 @@ export interface BookingData {
   date: string;
   time: string;
   timezone: string;
+  selectedIsoSlot?: string;
 }
 
 interface BookingModalProps {
@@ -27,38 +30,46 @@ interface BookingModalProps {
   onBookingComplete?: (bookingData: BookingData) => void;
 }
 
-// Pre-populates realistic "Booked" slots so the calendar isn't empty
-const MOCK_BOOKED_SLOTS = new Set([
-  "2026-10-20-09:00",
-  "2026-10-20-11:00",
-  "2026-10-20-14:00",
-  "2026-10-21-10:00",
-  "2026-10-21-13:30",
-  "2026-10-22-09:30",
-  "2026-10-22-15:00",
-  "2026-10-23-10:30",
-  "2026-10-26-08:30",
-  "2026-10-26-14:30",
-]);
+interface AvailabilityApiResponse {
+  date: string;
+  timezone: string;
+  availableSlots: string[]; // ISO string array e.g. ["2026-10-21T14:00:00.000Z"]
+  error?: string;
+}
 
-const TIME_SLOTS = [
-  "08:00 AM",
-  "08:30 AM",
-  "09:00 AM",
-  "09:30 AM",
-  "10:00 AM",
-  "10:30 AM",
-  "11:00 AM",
-  "11:30 AM",
-  "01:00 PM",
-  "01:30 PM",
-  "02:00 PM",
-  "02:30 PM",
-  "03:00 PM",
-  "03:30 PM",
-  "04:00 PM",
-  "04:30 PM",
-];
+// Timezone mapper helper
+const getTimezoneString = (tz: string) => {
+  switch (tz) {
+    case "CST":
+      return "America/Chicago";
+    case "EST":
+      return "America/New_York";
+    case "MST":
+      return "America/Denver";
+    case "PST":
+      return "America/Los_Angeles";
+    default:
+      return tz;
+  }
+};
+
+// Formats UTC ISO 8601 string to local time (e.g. "09:30 AM")
+const formatSlotTime = (isoString: string, timezone: string) => {
+  try {
+    const date = new Date(isoString);
+    const targetTz = getTimezoneString(timezone);
+
+    return new Intl.DateTimeFormat("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: targetTz,
+    }).format(date);
+  } catch (err) {
+    console.error("Error formatting slot time:", err);
+    return isoString;
+  }
+};
 
 export const BookingModal: React.FC<BookingModalProps> = ({
   isOpen,
@@ -66,10 +77,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   initialStep = 1,
   onBookingComplete,
 }) => {
-  // Booking Flow State (1: Intake, 2: Calendar, 3: Confirmation)
+  // Step state
   const [bookingStep, setBookingStep] = useState<number>(initialStep);
 
-  // Intake Form State
+  // Intake Form state
   const [formData, setFormData] = useState({
     contractorName: "",
     companyName: "",
@@ -78,15 +89,21 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     email: "",
   });
 
-  // Calendar State
+  // Calendar state
   const [selectedDate, setSelectedDate] = useState("2026-10-21");
-  const [selectedTime, setSelectedTime] = useState("10:30 AM");
+  const [selectedIsoSlot, setSelectedIsoSlot] = useState<string>("");
   const [selectedTimezone, setSelectedTimezone] = useState("CST");
   const [calendarViewMode, setCalendarViewMode] = useState<"month" | "week">(
     "month",
   );
-  const [viewDate, setViewDate] = useState(new Date(2026, 9, 1)); // Default to Oct 2026
-  const [bookedSlots] = useState<Set<string>>(MOCK_BOOKED_SLOTS);
+  const [viewDate, setViewDate] = useState(new Date(2026, 9, 1));
+
+  // Phase 1: API Availability State
+  const [availableSlots, setAvailableSlots] = useState<string[]>([]);
+  const [isLoadingSlots, setIsLoadingSlots] = useState<boolean>(false);
+  const [availabilityError, setAvailabilityError] = useState<string | null>(
+    null,
+  );
 
   // Reset or sync step when modal opens
   useEffect(() => {
@@ -107,6 +124,49 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     };
   }, [isOpen]);
 
+  // PHASE 1: Fetch availability from Hono API when date or timezone changes
+  const fetchAvailability = async () => {
+    if (!selectedDate) return;
+
+    setIsLoadingSlots(true);
+    setAvailabilityError(null);
+    setSelectedIsoSlot(""); // Reset selection on change
+
+    try {
+      const host = 'https://api.arkansastrademarketing.com';
+      const url = `/api/availability?date=${encodeURIComponent(selectedDate)}&timezone=${encodeURIComponent(selectedTimezone)}`;
+      const response = await fetch(`${host}${url}`);
+
+      if (!response.ok) {
+        throw new Error(`Server returned status ${response.status}`);
+      }
+
+      const data: AvailabilityApiResponse = await response.json();
+
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      setAvailableSlots(data.availableSlots || []);
+    } catch (err) {
+      console.error("Error fetching availability slots:", err);
+      setAvailabilityError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load available time slots.",
+      );
+      setAvailableSlots([]);
+    } finally {
+      setIsLoadingSlots(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen && bookingStep === 2) {
+      fetchAvailability();
+    }
+  }, [isOpen, bookingStep, selectedDate, selectedTimezone]);
+
   // Date String Formatting Helper YYYY-MM-DD
   const formatDateStr = (year: number, month: number, day: number) => {
     const m = String(month + 1).padStart(2, "0");
@@ -114,7 +174,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     return `${year}-${m}-${d}`;
   };
 
-  // Month Navigation Handlers
   const handlePrevMonth = () => {
     setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, 1));
   };
@@ -124,62 +183,55 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   };
 
   const handleTodayMonth = () => {
-    const today = new Date(2026, 9, 20); // Baseline date matching original application
+    const today = new Date(2026, 9, 20);
     setViewDate(new Date(today.getFullYear(), today.getMonth(), 1));
     setSelectedDate("2026-10-20");
   };
 
   // Month View Grid Calculation
-  const monthCalendarGrid = useMemo(() => {
+  const monthCalendarGrid = React.useMemo(() => {
     const year = viewDate.getFullYear();
     const month = viewDate.getMonth();
 
-    const firstDayIndex = new Date(year, month, 1).getDay(); // 0 = Sun
+    const firstDayIndex = new Date(year, month, 1).getDay();
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const daysInPrevMonth = new Date(year, month, 0).getDate();
 
     const grid = [];
     const todayStr = "2026-10-18";
 
-    // Previous month padding
     for (let i = firstDayIndex - 1; i >= 0; i--) {
       const dayNum = daysInPrevMonth - i;
       const prevM = month === 0 ? 11 : month - 1;
       const prevY = month === 0 ? year - 1 : year;
-      const dateStr = formatDateStr(prevY, prevM, dayNum);
       grid.push({
         dayNum,
-        dateStr,
+        dateStr: formatDateStr(prevY, prevM, dayNum),
         isCurrentMonth: false,
         isPast: true,
       });
     }
 
-    // Current month days
     for (let d = 1; d <= daysInMonth; d++) {
       const dateStr = formatDateStr(year, month, d);
       const dayOfWeek = new Date(year, month, d).getDay();
-      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-
       grid.push({
         dayNum: d,
         dateStr,
         isCurrentMonth: true,
-        isWeekend,
+        isWeekend: dayOfWeek === 0 || dayOfWeek === 6,
         isPast: dateStr < todayStr,
       });
     }
 
-    // Next month padding to fill grid
     const totalCells = grid.length > 35 ? 42 : 35;
     const remainingCells = totalCells - grid.length;
     for (let i = 1; i <= remainingCells; i++) {
       const nextM = month === 11 ? 0 : month + 1;
       const nextY = month === 11 ? year + 1 : year;
-      const dateStr = formatDateStr(nextY, nextM, i);
       grid.push({
         dayNum: i,
-        dateStr,
+        dateStr: formatDateStr(nextY, nextM, i),
         isCurrentMonth: false,
         isPast: false,
       });
@@ -188,8 +240,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     return grid;
   }, [viewDate]);
 
-  // Week View Days Calculation
-  const weekViewDays = useMemo(() => {
+  // Week View Calculation
+  const weekViewDays = React.useMemo(() => {
     const baseDate = selectedDate
       ? new Date(selectedDate + "T00:00:00")
       : new Date(2026, 9, 20);
@@ -217,11 +269,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       const d = new Date(startOfWeek);
       d.setDate(startOfWeek.getDate() + i);
       const dateStr = formatDateStr(d.getFullYear(), d.getMonth(), d.getDate());
-      const dayName = d.toLocaleDateString("en-US", { weekday: "short" });
       days.push({
         dateStr,
         dayNum: d.getDate(),
-        dayName,
+        dayName: d.toLocaleDateString("en-US", { weekday: "short" }),
         monthName: monthNames[d.getMonth()],
         isPast: dateStr < "2026-10-18",
       });
@@ -261,9 +312,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           </button>
         </div>
 
-        {/* Modal Body Flow Steps */}
+        {/* Modal Body */}
         <div className="p-6 sm:p-8">
-          {/* STEP 1: CONTACT & BUSINESS INTAKE FORM */}
+          {/* STEP 1: CONTACT INTAKE FORM */}
           {bookingStep === 1 && (
             <form
               onSubmit={(e) => {
@@ -325,7 +376,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-[#002D3C] mb-1">
-                    Cell Phone (For SMS Webhook Test) *
+                    Cell Phone *
                   </label>
                   <input
                     type="tel"
@@ -394,10 +445,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             </form>
           )}
 
-          {/* STEP 2: FULL INTERACTIVE BOOKING CALENDAR */}
+          {/* STEP 2: CALENDAR & LIVE AVAILABILITY CHECK */}
           {bookingStep === 2 && (
             <div className="space-y-6">
-              {/* Calendar View Mode Header Controls */}
+              {/* Controls Header */}
               <div className="flex flex-wrap items-center justify-between gap-3 bg-[#F8FAFC] p-3 rounded-2xl border border-[#0093B3]/30">
                 <div className="flex items-center space-x-1 bg-white p-1 rounded-xl border border-[#0093B3]/20 text-xs">
                   <button
@@ -424,7 +475,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   </button>
                 </div>
 
-                {/* Month Navigation Controls */}
+                {/* Month Navigation */}
                 <div className="flex items-center space-x-3">
                   <button
                     type="button"
@@ -476,7 +527,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 </div>
               </div>
 
-              {/* Calendar Grid Display */}
+              {/* Month View Grid */}
               {calendarViewMode === "month" ? (
                 <div className="bg-[#F8FAFC] p-4 rounded-2xl border border-[#0093B3]/30">
                   <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-mono font-black text-[#0093B3] uppercase pb-2 border-b border-[#0093B3]/20">
@@ -518,7 +569,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   </div>
                 </div>
               ) : (
-                /* Week View Display */
+                /* Week View Grid */
                 <div className="bg-[#F8FAFC] p-4 rounded-2xl border border-[#0093B3]/30">
                   <div className="grid grid-cols-7 gap-2 text-center">
                     {weekViewDays.map((day, idx) => {
@@ -553,62 +604,86 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 </div>
               )}
 
-              {/* 30-Minute Time Slot Picker Grid */}
+              {/* Time Slot Picker Grid */}
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <label className="text-xs font-bold text-[#002D3C] uppercase tracking-wider flex items-center space-x-2">
                     <Clock className="w-4 h-4 text-[#F96E46]" />
-                    <span>
-                      Available 30-Min Strategy Call Slots ({selectedDate})
-                    </span>
+                    <span>Available Strategy Call Slots ({selectedDate})</span>
                   </label>
                   <span className="text-[11px] text-[#0093B3] font-mono font-bold">
-                    ● Cyan = Available
+                    ● Live Google Calendar Sync
                   </span>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                  {TIME_SLOTS.map((slot) => {
-                    const timeKey = slot
-                      .replace(":00 ", ":00")
-                      .replace(":30 ", ":30")
-                      .replace(" AM", "")
-                      .replace(" PM", "");
-                    const slotKey = `${selectedDate}-${timeKey}`;
-                    const isBooked = bookedSlots.has(slotKey);
-                    const isSelected = selectedTime === slot;
+                {/* API Error State Banner */}
+                {availabilityError && (
+                  <div className="p-4 mb-3 bg-red-50 border border-red-200 rounded-xl flex items-center justify-between text-red-700 text-xs">
+                    <div className="flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                      <span>{availabilityError}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={fetchAvailability}
+                      className="inline-flex items-center gap-1 font-bold underline hover:text-red-900 cursor-pointer"
+                    >
+                      <RefreshCw className="w-3 h-3" /> Retry
+                    </button>
+                  </div>
+                )}
 
-                    return (
-                      <button
-                        key={slot}
-                        type="button"
-                        disabled={isBooked}
-                        onClick={() => setSelectedTime(slot)}
-                        className={`py-2.5 px-3 rounded-xl text-xs font-mono font-bold transition-all flex items-center justify-between cursor-pointer ${
-                          isBooked
-                            ? "bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed line-through"
-                            : isSelected
+                {/* API Loading Skeleton */}
+                {isLoadingSlots ? (
+                  <div className="bg-[#F8FAFC] border border-[#0093B3]/20 rounded-2xl p-8 flex flex-col items-center justify-center text-center space-y-2">
+                    <Loader2 className="w-6 h-6 text-[#0093B3] animate-spin" />
+                    <span className="text-xs font-mono font-bold text-[#002D3C]/70">
+                      Querying Google Calendar availability...
+                    </span>
+                  </div>
+                ) : availableSlots.length === 0 && !availabilityError ? (
+                  /* Empty State */
+                  <div className="bg-[#F8FAFC] border border-[#0093B3]/20 rounded-2xl p-8 text-center">
+                    <p className="text-xs text-[#002D3C]/70 font-semibold">
+                      No strategy call slots available for {selectedDate}.
+                      Please select another date on the calendar.
+                    </p>
+                  </div>
+                ) : (
+                  /* Live Slots Grid */
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    {availableSlots.map((isoSlot) => {
+                      const displayTime = formatSlotTime(
+                        isoSlot,
+                        selectedTimezone,
+                      );
+                      const isSelected = selectedIsoSlot === isoSlot;
+
+                      return (
+                        <button
+                          key={isoSlot}
+                          type="button"
+                          onClick={() => setSelectedIsoSlot(isoSlot)}
+                          className={`py-2.5 px-3 rounded-xl text-xs font-mono font-bold transition-all flex items-center justify-between cursor-pointer ${
+                            isSelected
                               ? "bg-[#F96E46] text-white border border-[#F96E46] shadow-md scale-105 z-10"
                               : "bg-white text-[#002D3C] border border-[#0093B3]/30 hover:border-[#0093B3] hover:bg-[#E8EBF7]/60"
-                        }`}
-                      >
-                        <span>{slot}</span>
-                        {isBooked ? (
-                          <span className="text-[9px] bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded font-sans uppercase">
-                            Booked
-                          </span>
-                        ) : isSelected ? (
-                          <Check className="w-4 h-4 text-white" />
-                        ) : (
-                          <span className="w-2 h-2 rounded-full bg-[#0093B3]"></span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
+                          }`}
+                        >
+                          <span>{displayTime}</span>
+                          {isSelected ? (
+                            <Check className="w-4 h-4 text-white" />
+                          ) : (
+                            <span className="w-2 h-2 rounded-full bg-[#0093B3]"></span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
-              {/* Step 2 Navigation Actions */}
+              {/* Navigation Actions */}
               <div className="flex items-center justify-between pt-4 border-t border-[#0093B3]/20">
                 <button
                   type="button"
@@ -620,25 +695,12 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
                 <button
                   type="button"
+                  disabled={!selectedIsoSlot}
                   onClick={() => {
-                    if (!selectedDate || !selectedTime) {
-                      alert(
-                        "Please select both an available date and time slot.",
-                      );
-                      return;
-                    }
-                    const finalData: BookingData = {
-                      ...formData,
-                      date: selectedDate,
-                      time: selectedTime,
-                      timezone: selectedTimezone,
-                    };
-                    if (onBookingComplete) {
-                      onBookingComplete(finalData);
-                    }
+                    if (!selectedIsoSlot) return;
                     setBookingStep(3);
                   }}
-                  className="bg-[#F96E46] hover:bg-[#e25d36] text-white font-extrabold px-6 py-3 rounded-xl text-xs uppercase tracking-wider transition-all flex items-center space-x-2 cursor-pointer shadow-lg"
+                  className="bg-[#F96E46] hover:bg-[#e25d36] disabled:opacity-50 text-white font-extrabold px-6 py-3 rounded-xl text-xs uppercase tracking-wider transition-all flex items-center space-x-2 cursor-pointer shadow-lg"
                 >
                   <span>Confirm Appointment</span>
                   <Check className="w-4 h-4" />
@@ -647,7 +709,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             </div>
           )}
 
-          {/* STEP 3: APPOINTMENT CONFIRMATION SCREEN */}
+          {/* STEP 3: CONFIRMATION SCREEN (Stubbed for Phase 2) */}
           {bookingStep === 3 && (
             <div className="text-center space-y-6 py-4">
               <div className="w-16 h-16 bg-[#0093B3]/10 border-2 border-[#0093B3] rounded-full flex items-center justify-center text-[#0093B3] mx-auto shadow-sm">
@@ -661,11 +723,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 <h3 className="text-2xl font-black text-[#002D3C] mt-3">
                   Strategy Call Confirmed!
                 </h3>
-                <p className="text-xs text-[#002D3C]/80 mt-1 max-w-md mx-auto font-medium">
-                  We have locked in your 30-minute Little Rock territory
-                  strategy call. An SMS calendar invite has been dispatched to
-                  your cell.
-                </p>
               </div>
 
               {/* Summary Card */}
@@ -673,7 +730,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 <div className="flex justify-between border-b border-[#0093B3]/20 pb-2">
                   <span className="text-[#002D3C]/70">Date & Time:</span>
                   <span className="text-[#F96E46] font-bold">
-                    {selectedDate} @ {selectedTime} ({selectedTimezone})
+                    {selectedDate} @{" "}
+                    {formatSlotTime(selectedIsoSlot, selectedTimezone)} (
+                    {selectedTimezone})
                   </span>
                 </div>
                 <div className="flex justify-between border-b border-[#0093B3]/20 pb-2">
@@ -699,18 +758,18 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
                 <button
                   type="button"
-                  onClick={() =>
-                    alert("Calendar invite (.ics) downloaded to your device!")
-                  }
-                  className="w-full sm:w-auto bg-white hover:bg-[#E8EBF7] text-[#002D3C] px-5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-2 cursor-pointer border border-[#0093B3]/30 shadow-sm"
-                >
-                  <Calendar className="w-4 h-4 text-[#F96E46]" />
-                  <span>Add To Calendar</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={onClose}
+                  onClick={() => {
+                    if (onBookingComplete) {
+                      onBookingComplete({
+                        ...formData,
+                        date: selectedDate,
+                        time: formatSlotTime(selectedIsoSlot, selectedTimezone),
+                        timezone: selectedTimezone,
+                        selectedIsoSlot,
+                      });
+                    }
+                    onClose();
+                  }}
                   className="w-full sm:w-auto bg-[#F96E46] hover:bg-[#e25d36] text-white px-6 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer shadow-lg"
                 >
                   Done & Close
