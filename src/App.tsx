@@ -28,9 +28,6 @@ import {
   Quote,
 } from "lucide-react";
 import { BookingModal } from "./components/BookingModal";
-import type { BookingData } from "./components/BookingModal";
-import { createLead } from "./services/leadService";
-import type { LeadFormData } from "./entities/lead";
 import "./App.css";
 import SDI_Logo from "./assets/logo.png";
 
