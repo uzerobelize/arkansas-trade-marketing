@@ -84,21 +84,6 @@ export default function App() {
     };
   }, [isBookingOpen]);
 
-  const handleBookingComplete = async (data: BookingData) => {
-    const lead_dto = {
-      firstName: data.contractorName.split(" ")[0],
-      lastName: data.contractorName.split(" ")[1] || "",
-      email: data.email,
-      status: "new",
-      phone: data.phone,
-      notes: `BOOKING DATA INCOMING`,
-    } as LeadFormData;
-
-    const lead = await createLead(lead_dto);
-
-    console.log("Strategy call booked successfully:", lead);
-  };
-
   const netPerJob = jobSize * (margin / 100);
   const paybackJobs = Math.round((7500 / (netPerJob || 1)) * 10) / 10;
   const monthlyClosedJobs = Math.round(leads * 0.2 * 10) / 10;
@@ -1331,7 +1316,7 @@ export default function App() {
         isOpen={isBookingOpen}
         initialStep={bookingStep}
         onClose={() => setIsBookingOpen(false)}
-        onBookingComplete={handleBookingComplete}
+        onBookingComplete={(_)=>console.log("booked")}
       />
     </div>
   );
